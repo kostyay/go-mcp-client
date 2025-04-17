@@ -16,7 +16,9 @@ COPY --from=builder /app/dist /app/dist
 COPY --from=builder /app/package.json /app/package.json
 COPY --from=builder /app/package-lock.json /app/package-lock.json
 
-EXPOSE 3000
+ENV PORT=3000
+
+EXPOSE ${PORT}
 
 ENV NODE_ENV=production
 

@@ -2,7 +2,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import express, { Request, Response } from "express";
+import express, { Request, Response, NextFunction } from "express";
 
 import { IncomingMessage, ServerResponse } from "node:http";
 import {
@@ -359,10 +359,17 @@ class SlackClient {
 async function main() {
   const botToken = process.env.SLACK_BOT_TOKEN;
   const teamId = process.env.SLACK_TEAM_ID;
+  const bearerToken = process.env.MCP_SERVER_BEARER_TOKEN;
 
   if (!botToken || !teamId) {
     console.error(
       "Please set SLACK_BOT_TOKEN and SLACK_TEAM_ID environment variables",
+    );
+    process.exit(1);
+  }
+  if (!bearerToken) {
+    console.error(
+      "Please set MCP_SERVER_BEARER_TOKEN environment variable for authentication",
     );
     process.exit(1);
   }
@@ -558,7 +565,8 @@ async function main() {
 //   console.error("Fatal error in main():", error);
 //   process.exit(1);
 // });
-
+const port = process.env.PORT || 3000;
+const baseHost = process.env.BASE_HOST || "http://127.0.0.1:";
 const srv = express();
 // to support multiple simultaneous connections we have a lookup object from
 // sessionId to transport
@@ -566,8 +574,30 @@ const transports: {[sessionId: string]: SSEServerTransport} = {};
 
 let server = await main();
 
+// Authentication middleware
+const authenticateToken = (req: Request, res: Response, next: NextFunction): void => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  const expectedToken = process.env.MCP_SERVER_BEARER_TOKEN;
+
+  if (!token) {
+    res.status(401).send('Access Denied: No token provided');
+    return;
+  }
+
+  if (token !== expectedToken) {
+    res.status(403).send('Access Denied: Invalid token');
+    return;
+  }
+
+  next();
+};
+
+// Apply authentication globally
+srv.use(authenticateToken);
+
 srv.get("/sse", async (req: Request, res: Response) => {
-  const transport = new SSEServerTransport("http://127.0.0.1:3000/messages", res);
+  const transport = new SSEServerTransport(`${baseHost}/messages`, res);
 
   console.log("SSE: ", transport.sessionId);
 
@@ -596,4 +626,6 @@ srv.post("/messages", async (req: Request, res:Response) => {
   }
 });
 
-srv.listen(3000);
+srv.listen(port, () => {
+  console.log(`Server listening on port ${port}`);
+});

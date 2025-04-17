@@ -3,13 +3,40 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
+	"net/http"
 
 	"github.com/ThinkInAIXYZ/go-mcp/client"
 	"github.com/ThinkInAIXYZ/go-mcp/protocol"
 	"github.com/ThinkInAIXYZ/go-mcp/transport"
 )
+
+// BearerAuthTransport is an http.RoundTripper that adds a Bearer token
+// to the Authorization header of requests.
+type BearerAuthTransport struct {
+	Token     string           // Bearer token
+	Transport http.RoundTripper // Base transport (e.g., http.DefaultTransport)
+}
+
+// RoundTrip executes a single HTTP transaction, adding the Bearer token.
+func (t *BearerAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Get the base transport if not set
+	transport := t.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+
+	// Clone the request to avoid modifying the original
+	clonedReq := req.Clone(req.Context())
+
+	// Add the Authorization header
+	clonedReq.Header.Set("Authorization", "Bearer "+t.Token)
+
+	// Delegate to the base transport
+	return transport.RoundTrip(clonedReq)
+}
 
 type stdoutLogger struct {
 }
@@ -34,10 +61,41 @@ func (s stdoutLogger) Errorf(format string, a ...any) {
 	fmt.Printf(format, a...)
 }
 
+var (
+	serverURL   = flag.String("serverURL", "", "URL of the directory service")
+	bearerToken = flag.String("token", "", "Bearer token for authentication")
+)
+
 func main() {
+	flag.Parse() // Parse flags first
+
+	if *serverURL == "" {
+		log.Fatalf("serverURL is required")
+	}
+
+	if *bearerToken == "" {
+		log.Fatalf("bearerToken is required")
+	}
+
 	l := &stdoutLogger{}
 	// Create transport client (using SSE in this example)
-	transportClient, err := transport.NewSSEClientTransport("http://127.0.0.1:3000/sse", transport.WithSSEClientOptionLogger(l))
+	fmt.Printf("Creating transport client for %s\n", *serverURL)
+
+	httpClient := &http.Client{
+		// Use the custom BearerAuthTransport
+		Transport: &BearerAuthTransport{
+			Token: *bearerToken,
+		},
+	}
+
+	// Use the configured httpClient for SSE transport options if needed
+	// (check transport.NewSSEClientTransport documentation for options
+	// like transport.WithSSEClientOptionHTTPClient(httpClient))
+	transportClient, err := transport.NewSSEClientTransport(
+		fmt.Sprintf("%s/sse", *serverURL),
+		transport.WithSSEClientOptionLogger(l),
+		transport.WithSSEClientOptionHTTPClient(httpClient),
+	)
 	if err != nil {
 		log.Fatalf("Failed to create transport client: %v", err)
 	}
